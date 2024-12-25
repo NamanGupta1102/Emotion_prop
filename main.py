@@ -4,8 +4,15 @@ import preprocess as pre
 import propagation as prop
 import visualization as visual
 # import eval as evaluation
-
+from transformers import pipeline
 # Title of the App
+if __name__ == '__main__':
+    print("This ran: ffffffffffffff")
+    classifier = pipeline("sentiment-analysis", model="michellejieli/emotion_text_classifier")
+    print("This Finished rinningkkkkkkkkkkkkkkkkk")
+
+
+
 st.title("Emotion Propagation in YouTube Transcripts")
 st.sidebar.header("Settings")
 
@@ -30,7 +37,7 @@ if fetch_transcript:
         norm = pre.normalize_text(text)
         st.session_state.final_input = norm.line.values
         st.session_state.transcript_fetched = True
-        st.session_state.original_preds = prop.predict(st.session_state.final_input)
+        st.session_state.original_preds = prop.predict(st.session_state.final_input,classifier)
         st.write("Transcript successfully fetched and preprocessed!")
     except Exception as e:
         st.error(f"Error fetching transcript: {str(e)}")
@@ -50,17 +57,17 @@ if st.session_state.transcript_fetched:
     # Apply Propagation Algorithm
     if algorithm == "Leaky Competing Accumulators":
         st.session_state.propagated_emos = prop.leaky_competing_accumulators(
-            st.session_state.final_input, None, max_iters, decay, inhibition, influence
+            st.session_state.final_input, classifier, max_iters, decay, inhibition, influence
         )
     else:
         st.session_state.propagated_emos = prop.loopy_belief_propagation(
-            st.session_state.final_input, None, window_size, max_iters
+            st.session_state.final_input, classifier, window_size, max_iters
         )
 
     # Evaluate Performance
     st.subheader("Evaluation Metrics")
-    bleu_score = prop.get_bleu(st.session_state.final_input, None, prop.loopy_belief_propagation)
-    drift_score = prop.emotion_drift_score(st.session_state.final_input, None, prop.loopy_belief_propagation)
+    bleu_score = prop.get_bleu(st.session_state.final_input, classifier, prop.loopy_belief_propagation)
+    drift_score = prop.emotion_drift_score(st.session_state.final_input, classifier, prop.loopy_belief_propagation)
 
     st.metric(label="BLEU Score", value=f"{bleu_score:.3f}")
     st.metric(label="Emotion Drift Score", value=f"{drift_score:.3f}")

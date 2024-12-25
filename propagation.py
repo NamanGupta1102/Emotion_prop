@@ -1,16 +1,20 @@
-from transformers import pipeline
+# from transformers import pipeline
 import os
+import numpy as np
+# import random
+import math
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
-from transformers import pipeline
-import pickle
+# from transformers import pipeline
+# import pickle
 
 # with open('model.pkl', 'rb') as f:
 #     classifier = pickle.load(f)
-classifier = pipeline("sentiment-analysis", model="michellejieli/emotion_text_classifier")
+# if 
+# classifier = pipeline("sentiment-analysis", model="michellejieli/emotion_text_classifier")
 
 # from math import prod
 
-def predict(x,classifier=classifier):
+def predict(x,classifier=None):
     y_pred = []
     # c = 0
     for i in x:
@@ -24,7 +28,7 @@ def leaky_competing_accumulators(x, model, max_iters=10, decay=0.2, inhibition=0
 
 
     n = len(x)
-    predictions = predict(x)
+    predictions = predict(x,model)
     neutral_penalty = 0.955  # Scale down 'neutral' importance
     accumulators = [{emotion: 0.0 for emotion in emotions} for _ in range(n)]
 
@@ -98,16 +102,14 @@ def loopy_belief_propagation(
     """
     Robust Loopy Belief Propagation for emotion propagation with log-space calculations.
     """
-    import numpy as np
-    import random
-    import math
+
 
     emotions = ['anger', 'disgust', 'fear', 'joy', 'neutral', 'sadness', 'surprise']
 
     num_sentences = len(x_test)
 
     # Step 1: Initialize beliefs from the model
-    initial_predictions = predict(x_test)
+    initial_predictions = predict(x_test,model_predict)
 
 
     beliefs = []
@@ -115,7 +117,7 @@ def loopy_belief_propagation(
         # Use log probabilities to prevent underflow
         belief = {emotion: math.log(0.05) for emotion in emotions}
         belief[pred] = math.log(0.6)  # Higher log probability for predicted emotion
-        # belief['neutral'] = math.log(0.11)
+        belief['neutral'] = math.log(0.11)
 
         # Convert to probability space for final normalization
         beliefs.append({emotion: math.exp(belief[emotion]) for emotion in emotions})
@@ -173,7 +175,7 @@ from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
 def get_bleu(x, the_model,propagate):
   smoothing_function = SmoothingFunction().method1
 
-  true_vals = predict(x)
+  true_vals = predict(x,the_model)
   print("True vals:", true_vals)
   propagated_vals = propagate(x,the_model)
   print("Propagated vals:", propagated_vals)
@@ -183,7 +185,7 @@ def get_bleu(x, the_model,propagate):
 
 def emotion_drift_score(x, the_model, propagate ,n=3):
 
-    true_emotions = predict(x)
+    true_emotions = predict(x,the_model)
     # true_emotions = [i for i in true_emotions ]
     predicted_emotions = propagate(x ,the_model)
     # predicted_emotions = [i for i in predicted_emotions]
