@@ -4,8 +4,9 @@ os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 from transformers import pipeline
 import pickle
 
-with open('model.pkl', 'rb') as f:
-    classifier = pickle.load(f)
+# with open('model.pkl', 'rb') as f:
+#     classifier = pickle.load(f)
+classifier = pipeline("sentiment-analysis", model="michellejieli/emotion_text_classifier")
 
 # from math import prod
 
