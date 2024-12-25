@@ -5,9 +5,9 @@ from math import floor
 import nltk
 # nltk.download('stopwords')
 # nltk.download('wordnet')
-from nltk.corpus import stopwords
-stop_words = set(stopwords.words('english')) 
-
+# from nltk.corpus import stopwords
+# stop_words = set(stopwords.words('english')) 
+import numpy as np
 
 import regex as re
 from nltk.stem import WordNetLemmatizer
@@ -21,10 +21,10 @@ def lemmatization(text):
 
     return " ".join(text)
 
-def remove_stop_words(text):
+# def remove_stop_words(text):
 
-    Text=[i for i in str(text).split() if i not in stop_words]
-    return " ".join(Text)
+#     Text=[i for i in str(text).split() if i not in stop_words]
+#     return " ".join(Text)
 
 def Removing_numbers(text):
     text=''.join([i for i in text if not i.isdigit()])
@@ -70,7 +70,7 @@ def remove_small_sentences(df):
 def normalize_text(df):
     df.line=df.line.apply(lambda text : del_username(text))
     df.line=df.line.apply(lambda text : lower_case(text))
-    df.line=df.line.apply(lambda text : remove_stop_words(text))
+    # df.line=df.line.apply(lambda text : remove_stop_words(text))
     df.line=df.line.apply(lambda text : Removing_numbers(text))
     df.line=df.line.apply(lambda text : Removing_punctuations(text))
     df.line=df.line.apply(lambda text : Removing_urls(text))
@@ -82,7 +82,7 @@ def normalize_text(df):
 def normalized_sentence(sentence):
     sentence= del_username(sentence)
     sentence= lower_case(sentence)
-    sentence= remove_stop_words(sentence)
+    # sentence= remove_stop_words(sentence)
     sentence= Removing_numbers(sentence)
     sentence= Removing_punctuations(sentence)
     sentence= Removing_urls(sentence)
