@@ -27,13 +27,13 @@ if "propagated_emos" not in st.session_state:
     st.session_state.propagated_emos = None
 
 # Sidebar to accept YouTube Video ID
-video_id = st.sidebar.text_input("YouTube Video link", value="https://www.youtube.com/watch?v=MRtg6A1f2Ko", help="Enter the video ID from the YouTube URL")
-video_id = video_id.split('=')[-1]
+st.session_state.video_id = st.sidebar.text_input("YouTube Video link", value="https://www.youtube.com/watch?v=MRtg6A1f2Ko", help="Enter the video ID from the YouTube URL")
+st.session_state.video_id = st.session_state.video_id.split('=')[-1]
 fetch_transcript = st.sidebar.button("Fetch Transcript")
 
 if fetch_transcript:
     try:
-        transcript = YouTubeTranscriptApi.get_transcript(video_id)
+        transcript = YouTubeTranscriptApi.get_transcript(st.session_state.video_id)
         text = pre.normalize_yt(transcript=transcript)
         norm = pre.normalize_text(text)
         st.session_state.final_input = norm.line.values
