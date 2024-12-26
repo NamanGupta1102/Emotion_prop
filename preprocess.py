@@ -2,9 +2,9 @@
 # from nltk.corpus import stopwords
 import pandas as pd
 from math import floor
-# import nltk
+import nltk
 # nltk.download('stopwords')
-# nltk.download('wordnet')
+nltk.download('wordnet')
 # from nltk.corpus import stopwords
 # stop_words = set(stopwords.words('english')) 
 import numpy as np
