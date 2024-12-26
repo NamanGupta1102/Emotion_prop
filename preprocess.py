@@ -2,7 +2,7 @@
 # from nltk.corpus import stopwords
 import pandas as pd
 from math import floor
-import nltk
+# import nltk
 # nltk.download('stopwords')
 # nltk.download('wordnet')
 # from nltk.corpus import stopwords

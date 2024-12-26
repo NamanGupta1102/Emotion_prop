@@ -6,12 +6,12 @@ import visualization as visual
 # import eval as evaluation
 from transformers import pipeline
 # Title of the App
-# if __name__ == '__main__':
-#     # print("This ran: ffffffffffffff")
-#     classifier = pipeline("sentiment-analysis", model="michellejieli/emotion_text_classifier")
+if __name__ == '__main__':
+    # print("This ran: ffffffffffffff")
+    classifier = pipeline("sentiment-analysis", model="michellejieli/emotion_text_classifier")
     # print("This Finished rinningkkkkkkkkkkkkkkkkk")
 
-classifier = pipeline("sentiment-analysis", model="michellejieli/emotion_text_classifier")
+# classifier = pipeline("sentiment-analysis", model="michellejieli/emotion_text_classifier")
 
 st.title("Emotion Propagation in YouTube Transcripts")
 st.sidebar.header("Settings")
