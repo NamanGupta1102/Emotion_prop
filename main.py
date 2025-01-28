@@ -28,7 +28,7 @@ if "propagated_emos" not in st.session_state:
 
 # Sidebar to accept YouTube Video ID
 st.session_state.video_id = st.sidebar.text_input("YouTube Video link", value="https://www.youtube.com/watch?v=MRtg6A1f2Ko", help="Enter the video ID from the YouTube URL")
-st.session_state.video_id = st.session_state.video_id.split('=')[-1]
+st.session_state.video_id = st.session_state.video_id.split('v=')[-1]
 fetch_transcript = st.sidebar.button("Fetch Transcript")
 
 if fetch_transcript:
