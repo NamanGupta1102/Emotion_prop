@@ -8,7 +8,7 @@ from transformers import pipeline
 if __name__ == "__main__":
     classifier = pipeline("sentiment-analysis", model="michellejieli/emotion_text_classifier")
     # Your other code here...
-    print(classifier("You suck "))
+    print(classifier("You good "))
     with open('model.pkl', 'wb') as f:
         pickle.dump(classifier, f)
     
