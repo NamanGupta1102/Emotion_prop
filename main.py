@@ -1,94 +1,191 @@
+"""Streamlit app for Emotion Propagation in YouTube transcripts.
+Improved version with proper state handling, caching and a cleaner UI.
+"""
 import streamlit as st
 from youtube_transcript_api import YouTubeTranscriptApi
+from transformers import pipeline
+import matplotlib.pyplot as plt
 import preprocess as pre
 import propagation as prop
 import visualization as visual
-# import eval as evaluation
-from transformers import pipeline
-# Title of the App
-if __name__ == '__main__':
-    # print("This ran: ffffffffffffff")
-    classifier = pipeline("sentiment-analysis", model="michellejieli/emotion_text_classifier")
-    # print("This Finished rinningkkkkkkkkkkkkkkkkk")
 
-# classifier = pipeline("sentiment-analysis", model="michellejieli/emotion_text_classifier")
+# -------------------------------------------------
+# Caching helpers
+# -------------------------------------------------
 
-st.title("Emotion Propagation in YouTube Transcripts")
-st.sidebar.header("Settings")
+@st.cache_resource(show_spinner="Loading emotion classifier …")
+def get_classifier():
+    """Load the Hugging Face emotion classifier exactly once."""
+    return pipeline("sentiment-analysis", model="michellejieli/emotion_text_classifier")
 
-# Initialize session state for input parameters and results
-if "transcript_fetched" not in st.session_state:
-    st.session_state.transcript_fetched = False
-if "final_input" not in st.session_state:
-    st.session_state.final_input = None
-if "original_preds" not in st.session_state:
-    st.session_state.original_preds = None
-if "propagated_emos" not in st.session_state:
-    st.session_state.propagated_emos = None
 
-# Sidebar to accept YouTube Video ID
-st.session_state.video_id = st.sidebar.text_input("YouTube Video link", value="https://www.youtube.com/watch?v=MRtg6A1f2Ko", help="Enter the video ID from the YouTube URL")
-st.session_state.video_id = st.session_state.video_id.split('v=')[-1]
-fetch_transcript = st.sidebar.button("Fetch Transcript")
+@st.cache_data(show_spinner="Fetching transcript …")
+def fetch_transcript_lines(video_id: str):
+    """Download, normalize and return the transcript as a list of lines."""
+    transcript = YouTubeTranscriptApi.get_transcript(video_id)
+    text = pre.normalize_yt(transcript=transcript)
+    df = pre.normalize_text(text)
+    return df.line.values.tolist()
 
-if fetch_transcript:
-    try:
-        transcript = YouTubeTranscriptApi.get_transcript(st.session_state.video_id)
-        text = pre.normalize_yt(transcript=transcript)
-        norm = pre.normalize_text(text)
-        st.session_state.final_input = norm.line.values
-        st.session_state.transcript_fetched = True
-        st.session_state.original_preds = prop.predict(st.session_state.final_input,classifier)
-        st.write("Transcript successfully fetched and preprocessed!")
-    except Exception as e:
-        st.error(f"Error fetching transcript: {str(e)}")
 
-if st.session_state.transcript_fetched:
-    # Sidebar for Propagation Algorithm Parameters
-    st.sidebar.subheader("Propagation Parameters")
-    max_iters = st.sidebar.slider("Max Iterations", 1, 20, 10)
-    decay = st.sidebar.slider("Decay Rate", 0.0, 1.0, 0.2, step=0.05)
-    inhibition = st.sidebar.slider("Inhibition", 0.0, 1.0, 0.1, step=0.05)
-    influence = st.sidebar.slider("Influence", 0.0, 1.0, 0.3, step=0.05)
-    window_size = st.sidebar.slider("Window Size (Loopy)", 1, 5, 2)
+@st.cache_data(show_spinner="Predicting emotions …")
+def predict_emotions(lines):
+    """Return one emotion label per line using the cached classifier."""
+    clf = get_classifier()
+    return prop.predict(lines, clf)
 
-    st.sidebar.subheader("Choose Propagation Algorithm")
-    algorithm = st.sidebar.radio("Algorithm", ["Leaky Competing Accumulators", "Loopy Belief Propagation"])
 
-    # Apply Propagation Algorithm
-    if algorithm == "Leaky Competing Accumulators":
-        st.session_state.propagated_emos = prop.leaky_competing_accumulators(
-            st.session_state.final_input, classifier, max_iters, decay, inhibition, influence
-        )
-    else:
-        st.session_state.propagated_emos = prop.loopy_belief_propagation(
-            st.session_state.final_input, classifier, window_size, max_iters
+# -------------------------------------------------
+# Propagation wrapper
+# -------------------------------------------------
+
+def run_propagation(algo: str, lines: list[str], params: dict):
+    clf = get_classifier()
+
+    if algo == "Leaky Competing Accumulators":
+        return prop.leaky_competing_accumulators(
+            lines,
+            clf,
+            max_iters=params["max_iters"],
+            decay=params["decay"],
+            inhibition=params["inhibition"],
+            influence=params["influence"],
         )
 
-    # Evaluate Performance
-    st.subheader("Evaluation Metrics")
-    bleu_score = prop.get_bleu(st.session_state.final_input, classifier, prop.loopy_belief_propagation)
-    drift_score = prop.emotion_drift_score(st.session_state.final_input, classifier, prop.loopy_belief_propagation)
+    # default → Loopy Belief Propagation
+    return prop.loopy_belief_propagation(
+        lines,
+        clf,
+        window_size=params["window_size"],
+        max_iterations=params["max_iters"],
+    )
 
-    st.metric(label="BLEU Score", value=f"{bleu_score:.3f}")
-    st.metric(label="Emotion Drift Score", value=f"{drift_score:.3f}")
 
-    # Visualization
-    st.subheader("Visualization")
-    import matplotlib.pyplot as plt
+# -------------------------------------------------
+# Utility
+# -------------------------------------------------
 
-    st.subheader("Visualization")
-    # fig, ax = plt.subplots()  # Create a figure and axes
-    # visual.line_chart(st.session_state.original_preds, st.session_state.propagated_emos, ax=ax)
-    # st.pyplot(fig)  # Pass the figure to st.pyplot
+def extract_video_id(url_or_id: str) -> str:
+    """Robustly extract the video ID from a full URL or short‑code."""
+    if "youtube.com/watch?v=" in url_or_id:
+        return url_or_id.split("watch?v=")[1].split("&")[0]
+    if "youtu.be/" in url_or_id:
+        return url_or_id.split("youtu.be/")[1].split("?")[0]
+    return url_or_id.strip()
 
-    # Line chart for predictions
-    fig_line, ax_line = plt.subplots(figsize=(8, 6))  # Create figure and axes
-    visual.line_chart(st.session_state.original_preds, st.session_state.propagated_emos, ax=ax_line)  # Pass ax explicitly
-    st.pyplot(fig_line)
 
-    # Emotion distribution plot
-    st.subheader("Emotion Distribution")
-    fig_distribution = visual.plot_emotion_distribution(st.session_state.original_preds, st.session_state.propagated_emos)
-    st.pyplot(fig_distribution)
+# -------------------------------------------------
+# Streamlit layout
+# -------------------------------------------------
 
+def sidebar():
+    """Sidebar widgets return a dict with the current UI state."""
+    with st.sidebar:
+        st.header("🎛️ Controls")
+
+        # 1️⃣ YouTube input  --------------------------------------------------
+        raw = st.text_input(
+            "YouTube URL or ID",
+            value="https://www.youtube.com/watch?v=MRtg6A1f2Ko",
+            help="Paste a full YouTube link or just a video ID",
+        )
+        video_id = extract_video_id(raw)
+
+        fetch_clicked = st.button("Fetch transcript", key="fetch")
+
+        # Show a success badge when transcript already loaded
+        if st.session_state.get("lines"):
+            st.success("Transcript loaded ✅")
+
+        st.divider()
+
+        # 2️⃣ Algorithm choice  ----------------------------------------------
+        algorithm = st.radio(
+            "Propagation algorithm",
+            ("Leaky Competing Accumulators", "Loopy Belief Propagation"),
+            key="algorithm",
+        )
+
+        params = {}
+        if algorithm == "Leaky Competing Accumulators":
+            params["max_iters"] = st.slider("Max iterations", 1, 20, 10)
+            params["decay"] = st.slider("Decay", 0.0, 1.0, 0.2, 0.05)
+            params["inhibition"] = st.slider("Inhibition", 0.0, 1.0, 0.1, 0.05)
+            params["influence"] = st.slider("Influence", 0.0, 1.0, 0.3, 0.05)
+        else:
+            params["window_size"] = st.slider("Window size", 1, 5, 2)
+            params["max_iters"] = st.slider("Max iterations", 1, 20, 10)
+
+        run_clicked = st.button("Run propagation", key="run", disabled="lines" not in st.session_state)
+
+    return {
+        "video_id": video_id,
+        "fetch_clicked": fetch_clicked,
+        "algorithm": algorithm,
+        "params": params,
+        "run_clicked": run_clicked,
+    }
+
+
+# -------------------------------------------------
+# Main view
+# -------------------------------------------------
+
+def main():
+    st.set_page_config(page_title="Emotion Propagation", layout="wide")
+    st.title("🧠 Emotion Propagation in YouTube Transcripts")
+
+    ui_state = sidebar()
+
+    # 1️⃣ Fetch transcript ----------------------------------------------
+    if ui_state["fetch_clicked"]:
+        try:
+            lines = fetch_transcript_lines(ui_state["video_id"])
+            st.session_state["lines"] = lines
+            st.session_state["orig"] = predict_emotions(lines)
+            st.session_state.pop("prop", None)  # clear old results
+            st.experimental_rerun()
+        except Exception as err:
+            st.error(f"Failed to fetch transcript: {err}")
+
+    # 2️⃣ Run propagation ---------------------------------------------
+    if ui_state["run_clicked"]:
+        if "lines" in st.session_state:
+            st.session_state["prop"] = run_propagation(
+                ui_state["algorithm"],
+                st.session_state["lines"],
+                ui_state["params"],
+            )
+            st.experimental_rerun()
+
+    # 3️⃣ Display results ----------------------------------------------
+    if "prop" in st.session_state:
+        orig = st.session_state["orig"]
+        prop_emos = st.session_state["prop"]
+        lines = st.session_state["lines"]
+
+        # Metrics
+        colm1, colm2 = st.columns(2)
+        bleu = prop.get_bleu(lines, get_classifier, prop.loopy_belief_propagation)
+        drift = prop.emotion_drift_score(lines, get_classifier, prop.loopy_belief_propagation)
+        colm1.metric("BLEU", f"{bleu:.3f}")
+        colm2.metric("Emotion Drift", f"{drift:.3f}")
+
+        # Visualisations
+        st.subheader("📈 Emotion timeline")
+        fig_line, ax_line = plt.subplots(figsize=(10, 3))
+        visual.line_chart(orig, prop_emos, ax=ax_line)
+        st.pyplot(fig_line)
+
+        st.subheader("📊 Emotion distribution")
+        fig_dist = visual.plot_emotion_distribution(orig, prop_emos)
+        st.pyplot(fig_dist)
+
+        # Transcript with colours
+        with st.expander("💬 Transcript with propagated emotions", expanded=False):
+            for txt, emo in zip(lines, prop_emos):
+                st.markdown(f"**{emo.upper()}**: {txt}")
+
+
+if __name__ == "__main__":
+    main()
