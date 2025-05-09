@@ -2,12 +2,40 @@
 Improved version with proper state handling, caching and a cleaner UI.
 """
 import streamlit as st
-from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound, CouldNotRetrieveTranscript
+from youtube_transcript_api.formatters import TextFormatter
 from transformers import pipeline
 import matplotlib.pyplot as plt
 import preprocess as pre
 import propagation as prop
 import visualization as visual
+import re
+from typing import Optional, List
+import requests
+import time
+
+# -------------------------------------------------
+# State management
+# -------------------------------------------------
+
+def init_session_state():
+    """Initialize session state variables if they don't exist."""
+    if "lines" not in st.session_state:
+        st.session_state.lines = None
+    if "orig" not in st.session_state:
+        st.session_state.orig = None
+    if "prop" not in st.session_state:
+        st.session_state.prop = None
+    if "error" not in st.session_state:
+        st.session_state.error = None
+    if "loading" not in st.session_state:
+        st.session_state.loading = False
+    if "video_title" not in st.session_state:
+        st.session_state.video_title = None
+    if "show_instructions" not in st.session_state:
+        st.session_state.show_instructions = True
+    if "propagating" not in st.session_state:
+        st.session_state.propagating = False
 
 # -------------------------------------------------
 # Caching helpers
@@ -20,12 +48,79 @@ def get_classifier():
 
 
 @st.cache_data(show_spinner="Fetching transcript …")
-def fetch_transcript_lines(video_id: str):
+def fetch_transcript_lines(video_id: str) -> List[str]:
     """Download, normalize and return the transcript as a list of lines."""
-    transcript = YouTubeTranscriptApi.get_transcript(video_id)
-    text = pre.normalize_yt(transcript=transcript)
-    df = pre.normalize_text(text)
-    return df.line.values.tolist()
+    try:
+        # Try to get transcript with language fallback
+        try:
+            transcript = YouTubeTranscriptApi.get_transcript(video_id)
+        except NoTranscriptFound:
+            # Try to get transcript in English if available
+            transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=['en'])
+        except Exception:
+            # Try to get any available transcript
+            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+            transcript = transcript_list.find_transcript(['en']).fetch()
+        
+        # Debug: Print transcript structure
+        print(f"Transcript type: {type(transcript)}")
+        if isinstance(transcript, list) and len(transcript) > 0:
+            print(f"First entry: {transcript[0]}")
+        
+        # Validate transcript data
+        if not transcript:
+            raise Exception("Empty transcript received")
+        if not isinstance(transcript, list):
+            raise Exception(f"Expected list but got {type(transcript)}")
+        if len(transcript) == 0:
+            raise Exception("Transcript is empty")
+            
+        # Validate transcript entries
+        for i, entry in enumerate(transcript):
+            if not isinstance(entry, dict):
+                raise Exception(f"Entry {i} is not a dictionary")
+            if 'text' not in entry:
+                raise Exception(f"Entry {i} missing 'text' field")
+            if 'start' not in entry:
+                raise Exception(f"Entry {i} missing 'start' field")
+            if not isinstance(entry['text'], str):
+                raise Exception(f"Entry {i} 'text' field is not a string")
+            if not isinstance(entry['start'], (int, float)):
+                raise Exception(f"Entry {i} 'start' field is not a number")
+            
+        # Process the transcript
+        try:
+            text = pre.normalize_yt(transcript=transcript)
+            if text is None:
+                raise Exception("Normalization returned None")
+            if text.empty:
+                raise Exception("Normalization returned empty DataFrame")
+                
+            df = pre.normalize_text(text)
+            if df is None:
+                raise Exception("Text normalization returned None")
+            if df.empty:
+                raise Exception("Text normalization returned empty DataFrame")
+            if 'line' not in df.columns:
+                raise Exception("DataFrame missing 'line' column")
+            if df.line.empty:
+                raise Exception("No valid text content found in transcript")
+                
+            return df.line.values.tolist()
+        except ValueError as ve:
+            raise Exception(f"Error processing transcript: {str(ve)}")
+        
+    except TranscriptsDisabled:
+        raise Exception("This video has transcripts disabled")
+    except NoTranscriptFound:
+        raise Exception("No transcript found for this video. Try a different video.")
+    except CouldNotRetrieveTranscript:
+        raise Exception("Could not retrieve transcript. The video might be private or restricted.")
+    except Exception as e:
+        error_msg = str(e)
+        if "no element found" in error_msg.lower():
+            raise Exception("Invalid transcript format received. Try a different video.")
+        raise Exception(f"Error fetching transcript: {error_msg}")
 
 
 @st.cache_data(show_spinner="Predicting emotions …")
@@ -66,12 +161,42 @@ def run_propagation(algo: str, lines: list[str], params: dict):
 # -------------------------------------------------
 
 def extract_video_id(url_or_id: str) -> str:
-    """Robustly extract the video ID from a full URL or short‑code."""
-    if "youtube.com/watch?v=" in url_or_id:
-        return url_or_id.split("watch?v=")[1].split("&")[0]
-    if "youtu.be/" in url_or_id:
-        return url_or_id.split("youtu.be/")[1].split("?")[0]
-    return url_or_id.strip()
+    """Robustly extract the video ID from various YouTube URL formats."""
+    if not url_or_id:
+        raise Exception("Please enter a YouTube URL or video ID")
+        
+    patterns = [
+        r'(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/v\/|youtube\.com\/watch\?.*&v=)([^&\n?#]+)',
+        r'youtube\.com\/shorts\/([^&\n?#]+)',
+        r'youtube\.com\/watch\?.*v=([^&\n?#]+)',
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, url_or_id)
+        if match:
+            video_id = match.group(1)
+            if not video_id or len(video_id) < 10:  # YouTube IDs are typically 11 characters
+                raise Exception("Invalid YouTube video ID extracted from URL")
+            return video_id
+    
+    # If no pattern matches, assume it's a direct video ID
+    video_id = url_or_id.strip()
+    if not video_id or len(video_id) < 10:
+        raise Exception("Invalid YouTube video ID format")
+    return video_id
+
+
+def get_video_title(video_id: str) -> str:
+    """Get the title of a YouTube video using its ID."""
+    try:
+        # Using oEmbed API which doesn't require an API key
+        url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
+        response = requests.get(url)
+        if response.status_code == 200:
+            return response.json()['title']
+        return "Unknown Title"
+    except Exception:
+        return "Unknown Title"
 
 
 # -------------------------------------------------
@@ -87,14 +212,25 @@ def sidebar():
         raw = st.text_input(
             "YouTube URL or ID",
             value="https://www.youtube.com/watch?v=MRtg6A1f2Ko",
-            help="Paste a full YouTube link or just a video ID",
+            help="Paste any YouTube link (watch, shorts, embed) or just a video ID",
         )
-        video_id = extract_video_id(raw)
+        
+        try:
+            video_id = extract_video_id(raw)
+        except Exception as e:
+            st.error(str(e))
+            video_id = None
 
-        fetch_clicked = st.button("Fetch transcript", key="fetch")
+        fetch_clicked = st.button("Fetch transcript", key="fetch", disabled=not video_id)
 
-        # Show a success badge when transcript already loaded
-        if st.session_state.get("lines"):
+        # Show status messages
+        if st.session_state.error:
+            st.error(st.session_state.error)
+            st.session_state.error = None
+        
+        if st.session_state.loading:
+            st.info("Loading transcript...")
+        elif st.session_state.lines:
             st.success("Transcript loaded ✅")
 
         st.divider()
@@ -133,41 +269,129 @@ def sidebar():
 
 def main():
     st.set_page_config(page_title="Emotion Propagation", layout="wide")
+    
+    # Initialize session state first
+    init_session_state()
+    
     st.title("🧠 Emotion Propagation in YouTube Transcripts")
+    
+    # Add instructions toggle and content
+    col1, col2 = st.columns([1, 5])
+    with col1:
+        if st.button("ℹ️ Show Instructions"):
+            st.session_state.show_instructions = not st.session_state.show_instructions
+            st.rerun()
+    
+    if st.session_state.show_instructions:
+        with st.expander("ℹ️ How to use this app", expanded=True):
+            st.markdown("""
+            ### Quick Start Guide
+            
+            1. **Enter a YouTube URL**
+               - Paste any YouTube video URL (regular, shorts, or embed)
+               - Or just paste the video ID
+            
+            2. **Fetch Transcript**
+               - Click the "Fetch transcript" button
+               - Wait for the transcript to load
+            
+            3. **Choose Algorithm**
+               - Select between two propagation algorithms:
+                 - **Leaky Competing Accumulators**: Better for short-term emotion changes
+                 - **Loopy Belief Propagation**: Better for long-term emotion patterns
+            
+            4. **Adjust Parameters**
+               - Tune the algorithm parameters to get desired results
+               - Higher influence = stronger emotion propagation
+               - Higher decay = faster emotion fading
+            
+            5. **Run Analysis**
+               - Click "Run propagation" to see the results
+               - View emotion timeline and distribution
+               - Check the transcript with propagated emotions
+            
+            ### Tips
+            - Use videos with clear speech and good audio quality
+            - Longer videos may take more time to process
+            - Try different parameters to see how they affect the results
+            """)
 
     ui_state = sidebar()
 
     # 1️⃣ Fetch transcript ----------------------------------------------
     if ui_state["fetch_clicked"]:
+        st.session_state.loading = True
+        st.session_state.error = None
         try:
             lines = fetch_transcript_lines(ui_state["video_id"])
-            st.session_state["lines"] = lines
-            st.session_state["orig"] = predict_emotions(lines)
-            st.session_state.pop("prop", None)  # clear old results
-            st.experimental_rerun()
+            st.session_state.lines = lines
+            st.session_state.orig = predict_emotions(lines)
+            st.session_state.prop = None  # clear old results
+            st.session_state.video_title = get_video_title(ui_state["video_id"])
+            st.rerun()
         except Exception as err:
-            st.error(f"Failed to fetch transcript: {err}")
+            st.session_state.error = str(err)
+            st.session_state.lines = None
+            st.session_state.orig = None
+            st.session_state.prop = None
+            st.session_state.video_title = None
+            st.rerun()
+        finally:
+            st.session_state.loading = False
 
     # 2️⃣ Run propagation ---------------------------------------------
-    if ui_state["run_clicked"]:
-        if "lines" in st.session_state:
-            st.session_state["prop"] = run_propagation(
+    if ui_state["run_clicked"] and st.session_state.lines:
+        st.session_state.propagating = True
+        try:
+            # Create a placeholder for the loading animation
+            loading_placeholder = st.empty()
+            
+            # Show loading animation
+            with loading_placeholder.container():
+                st.markdown("""
+                <div style='text-align: center; padding: 20px;'>
+                    <h3>🔄 Running Emotion Propagation</h3>
+                    <p>Processing transcript and analyzing emotions...</p>
+                    <p style='color: #666; font-size: 0.9em;'>This may take a few moments depending on the video length</p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Show a spinner
+                st.spinner("Analyzing emotions and propagating them through the transcript...")
+            
+            # Run the actual propagation
+            st.session_state.prop = run_propagation(
                 ui_state["algorithm"],
-                st.session_state["lines"],
+                st.session_state.lines,
                 ui_state["params"],
             )
-            st.experimental_rerun()
+            
+            # Clear loading animation
+            loading_placeholder.empty()
+            st.rerun()
+        except Exception as err:
+            st.session_state.error = f"Error during propagation: {str(err)}"
+            st.rerun()
+        finally:
+            st.session_state.propagating = False
 
     # 3️⃣ Display results ----------------------------------------------
-    if "prop" in st.session_state:
-        orig = st.session_state["orig"]
-        prop_emos = st.session_state["prop"]
-        lines = st.session_state["lines"]
+    if st.session_state.prop:
+        orig = st.session_state.orig
+        prop_emos = st.session_state.prop
+        lines = st.session_state.lines
+
+        # Display video title
+        if st.session_state.video_title:
+            st.subheader(f"📺 {st.session_state.video_title}")
+
+        # Get classifier instance
+        classifier = get_classifier()
 
         # Metrics
         colm1, colm2 = st.columns(2)
-        bleu = prop.get_bleu(lines, get_classifier, prop.loopy_belief_propagation)
-        drift = prop.emotion_drift_score(lines, get_classifier, prop.loopy_belief_propagation)
+        bleu = prop.get_bleu(lines, classifier, prop.loopy_belief_propagation)
+        drift = prop.emotion_drift_score(lines, classifier, prop.loopy_belief_propagation)
         colm1.metric("BLEU", f"{bleu:.3f}")
         colm2.metric("Emotion Drift", f"{drift:.3f}")
 
