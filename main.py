@@ -13,6 +13,7 @@ import re
 from typing import Optional, List
 import requests
 import time
+import random
 
 # -------------------------------------------------
 # State management
@@ -47,80 +48,90 @@ def get_classifier():
     return pipeline("sentiment-analysis", model="michellejieli/emotion_text_classifier")
 
 
-@st.cache_data(show_spinner="Fetching transcript …")
+@st.cache_data(show_spinner="Fetching transcript …", ttl=3600)  # Cache for 1 hour
 def fetch_transcript_lines(video_id: str) -> List[str]:
     """Download, normalize and return the transcript as a list of lines."""
-    try:
-        # Try to get transcript with language fallback
+    max_retries = 3
+    retry_delay = 2  # seconds
+    
+    for attempt in range(max_retries):
         try:
-            transcript = YouTubeTranscriptApi.get_transcript(video_id)
+            # Try different methods to get the transcript
+            try:
+                # First try: Get transcript in default language
+                transcript = YouTubeTranscriptApi.get_transcript(video_id)
+            except NoTranscriptFound:
+                # Second try: Get transcript in English
+                transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=['en'])
+            except Exception:
+                # Third try: Get any available transcript
+                transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+                transcript = transcript_list.find_transcript(['en']).fetch()
+            
+            # Validate transcript data
+            if not transcript:
+                raise Exception("Empty transcript received")
+            if not isinstance(transcript, list):
+                raise Exception(f"Expected list but got {type(transcript)}")
+            if len(transcript) == 0:
+                raise Exception("Transcript is empty")
+                
+            # Validate transcript entries
+            for i, entry in enumerate(transcript):
+                if not isinstance(entry, dict):
+                    raise Exception(f"Entry {i} is not a dictionary")
+                if 'text' not in entry:
+                    raise Exception(f"Entry {i} missing 'text' field")
+                if 'start' not in entry:
+                    raise Exception(f"Entry {i} missing 'start' field")
+                if not isinstance(entry['text'], str):
+                    raise Exception(f"Entry {i} 'text' field is not a string")
+                if not isinstance(entry['start'], (int, float)):
+                    raise Exception(f"Entry {i} 'start' field is not a number")
+                
+            # Process the transcript
+            try:
+                text = pre.normalize_yt(transcript=transcript)
+                if text is None:
+                    raise Exception("Normalization returned None")
+                if text.empty:
+                    raise Exception("Normalization returned empty DataFrame")
+                    
+                df = pre.normalize_text(text)
+                if df is None:
+                    raise Exception("Text normalization returned None")
+                if df.empty:
+                    raise Exception("Text normalization returned empty DataFrame")
+                if 'line' not in df.columns:
+                    raise Exception("DataFrame missing 'line' column")
+                if df.line.empty:
+                    raise Exception("No valid text content found in transcript")
+                    
+                return df.line.values.tolist()
+            except ValueError as ve:
+                raise Exception(f"Error processing transcript: {str(ve)}")
+            
+        except TranscriptsDisabled:
+            raise Exception("This video has transcripts disabled")
         except NoTranscriptFound:
-            # Try to get transcript in English if available
-            transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=['en'])
-        except Exception:
-            # Try to get any available transcript
-            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-            transcript = transcript_list.find_transcript(['en']).fetch()
-        
-        # Debug: Print transcript structure
-        print(f"Transcript type: {type(transcript)}")
-        if isinstance(transcript, list) and len(transcript) > 0:
-            print(f"First entry: {transcript[0]}")
-        
-        # Validate transcript data
-        if not transcript:
-            raise Exception("Empty transcript received")
-        if not isinstance(transcript, list):
-            raise Exception(f"Expected list but got {type(transcript)}")
-        if len(transcript) == 0:
-            raise Exception("Transcript is empty")
-            
-        # Validate transcript entries
-        for i, entry in enumerate(transcript):
-            if not isinstance(entry, dict):
-                raise Exception(f"Entry {i} is not a dictionary")
-            if 'text' not in entry:
-                raise Exception(f"Entry {i} missing 'text' field")
-            if 'start' not in entry:
-                raise Exception(f"Entry {i} missing 'start' field")
-            if not isinstance(entry['text'], str):
-                raise Exception(f"Entry {i} 'text' field is not a string")
-            if not isinstance(entry['start'], (int, float)):
-                raise Exception(f"Entry {i} 'start' field is not a number")
-            
-        # Process the transcript
-        try:
-            text = pre.normalize_yt(transcript=transcript)
-            if text is None:
-                raise Exception("Normalization returned None")
-            if text.empty:
-                raise Exception("Normalization returned empty DataFrame")
-                
-            df = pre.normalize_text(text)
-            if df is None:
-                raise Exception("Text normalization returned None")
-            if df.empty:
-                raise Exception("Text normalization returned empty DataFrame")
-            if 'line' not in df.columns:
-                raise Exception("DataFrame missing 'line' column")
-            if df.line.empty:
-                raise Exception("No valid text content found in transcript")
-                
-            return df.line.values.tolist()
-        except ValueError as ve:
-            raise Exception(f"Error processing transcript: {str(ve)}")
-        
-    except TranscriptsDisabled:
-        raise Exception("This video has transcripts disabled")
-    except NoTranscriptFound:
-        raise Exception("No transcript found for this video. Try a different video.")
-    except CouldNotRetrieveTranscript:
-        raise Exception("Could not retrieve transcript. The video might be private or restricted.")
-    except Exception as e:
-        error_msg = str(e)
-        if "no element found" in error_msg.lower():
-            raise Exception("Invalid transcript format received. Try a different video.")
-        raise Exception(f"Error fetching transcript: {error_msg}")
+            raise Exception("No transcript found for this video. Try a different video.")
+        except CouldNotRetrieveTranscript:
+            if attempt < max_retries - 1:
+                # Add some random delay to avoid rate limiting
+                time.sleep(retry_delay + random.random())
+                continue
+            raise Exception("Could not retrieve transcript. The video might be private, restricted, or temporarily unavailable.")
+        except Exception as e:
+            error_msg = str(e)
+            if "no element found" in error_msg.lower():
+                raise Exception("Invalid transcript format received. Try a different video.")
+            if attempt < max_retries - 1:
+                # Add some random delay to avoid rate limiting
+                time.sleep(retry_delay + random.random())
+                continue
+            raise Exception(f"Error fetching transcript: {error_msg}")
+    
+    raise Exception("Failed to fetch transcript after multiple attempts. Please try again later.")
 
 
 @st.cache_data(show_spinner="Predicting emotions …")
