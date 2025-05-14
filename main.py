@@ -56,10 +56,12 @@ def fetch_transcript_with_retry(video_id: str, max_retries: int = 3) -> List[dic
     for attempt in range(max_retries):
         try:
             # First try: Get transcript in default language
+            WEBSHARE_USER = "nshdkdcu"
+            WEBSHARE_PASS = "bord64t1quu9"
             yt_api =YouTubeTranscriptApi(
         proxy_config=WebshareProxyConfig(
-            proxy_username= st.secrets["WEBSHARE_USER"],
-            proxy_password= st.secrets["WEBSHARE_PASS"],
+            proxy_username= WEBSHARE_USER, #st.secrets["WEBSHARE_USER"],
+            proxy_password= WEBSHARE_PASS # st.secrets["WEBSHARE_PASS"],
         ))
             return yt_api.get_transcript(video_id)
         except NoTranscriptFound:
