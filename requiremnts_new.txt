@@ -1,9 +1,0 @@
-streamlit
-youtube_transcript_api
-transformers
-nltk
-matplotlib
-seaborn
-pandas
-regex
-torch

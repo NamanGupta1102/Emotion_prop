@@ -98,17 +98,62 @@ def normalized_sentence(sentence):
 # print(df.head())
 
 def normalize_yt(transcript):
-    # Convert data into a DataFrame
-    df = pd.DataFrame(transcript)
+    """Normalize YouTube transcript data into a DataFrame with text lines.
+    
+    Args:
+        transcript: List of dicts containing transcript data with 'text' and 'start' fields
+        
+    Returns:
+        DataFrame with normalized text lines
+    """
+    try:
+        # Validate input
+        if not isinstance(transcript, list):
+            raise ValueError(f"Expected list but got {type(transcript)}")
+        if len(transcript) == 0:
+            raise ValueError("Empty transcript received")
+            
+        # Convert data into a DataFrame
+        df = pd.DataFrame(transcript)
+        
+        # Debug: Print DataFrame info
+        print("DataFrame columns:", df.columns.tolist())
+        print("DataFrame shape:", df.shape)
+        
+        # Validate required columns
+        required_cols = ['text', 'start']
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        if missing_cols:
+            raise ValueError(f"Transcript missing required columns: {', '.join(missing_cols)}")
 
-    # Add a minute column (flooring the start time divided by 60)
-    df['minute'] = df['start'].apply(lambda x: floor(x / 60))
+        # Validate data types
+        if not df['text'].dtype == 'object':
+            raise ValueError(f"Expected 'text' column to be string type, got {df['text'].dtype}")
+        if not pd.api.types.is_numeric_dtype(df['start']):
+            raise ValueError(f"Expected 'start' column to be numeric type, got {df['start'].dtype}")
 
-    # Group by minute and concatenate text
-    merged_df = df.groupby('minute')['text'].apply(' '.join).reset_index()
+        # Add a minute column (flooring the start time divided by 60)
+        df['minute'] = df['start'].apply(lambda x: floor(float(x) / 60))
 
-    # Rename columns for clarity
-    merged_df.drop(['minute'],axis=1,inplace=True)
-    merged_df.columns = ['line']
+        # Group by minute and concatenate text
+        merged_df = df.groupby('minute')['text'].apply(' '.join).reset_index()
 
-    return merged_df
+        # Validate merged DataFrame
+        if merged_df.empty:
+            raise ValueError("No data after grouping by minute")
+
+        # Rename columns for clarity
+        merged_df.drop(['minute'], axis=1, inplace=True)
+        merged_df.columns = ['line']
+
+        # Final validation
+        if merged_df.empty:
+            raise ValueError("Empty DataFrame after processing")
+        if 'line' not in merged_df.columns:
+            raise ValueError("Missing 'line' column in final DataFrame")
+        if merged_df['line'].empty:
+            raise ValueError("No text content in final DataFrame")
+
+        return merged_df
+    except Exception as e:
+        raise ValueError(f"Error processing transcript: {str(e)}")

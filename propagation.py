@@ -14,13 +14,29 @@ os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 
 # from math import prod
 
-def predict(x,classifier=None):
+def predict(x, classifier=None):
+    """Predict emotions for a list of text inputs using the provided classifier.
+    
+    Args:
+        x: List of text inputs to classify
+        classifier: Hugging Face pipeline for sentiment analysis
+        
+    Returns:
+        List of predicted emotion labels
+    """
+    if classifier is None:
+        raise ValueError("Classifier must be provided")
+        
     y_pred = []
-    # c = 0
     for i in x:
-        # c+=1
-        # print(c)
-        y_pred.append(classifier(i)[0]['label'])
+        try:
+            result = classifier(i)
+            if isinstance(result, list) and len(result) > 0 and 'label' in result[0]:
+                y_pred.append(result[0]['label'])
+            else:
+                raise ValueError(f"Unexpected classifier output format: {result}")
+        except Exception as e:
+            raise ValueError(f"Error classifying text: {str(e)}")
     return y_pred
 
 def leaky_competing_accumulators(x, model, max_iters=10, decay=0.2, inhibition=0.1, influence=0.3,
